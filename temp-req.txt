@@ -1,0 +1,3 @@
+python-dateutil==2.8.2
+kombu==5.3.4
+celery[redis]==5.3.6
