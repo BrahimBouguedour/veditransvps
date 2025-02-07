@@ -1,13 +1,13 @@
 [phases.setup]
 nixPkgs = ['python39', 'gcc']
-aptPkgs = ['python3-dev', 'build-essential', 'ffmpeg', 'git']
+aptPkgs = ['python3-dev', 'build-essential', 'ffmpeg', 'git', 'python3-pip']
 
 [phases.install]
 cmds = [
-    'python3 -m ensurepip',
-    'python3 -m pip install --no-cache-dir --upgrade pip',
+    'apt-get update && apt-get install -y python3-pip',
+    'pip3 install --no-cache-dir --upgrade pip',
     'cd backend',
-    'python3 -m pip install --no-cache-dir -r requirements.txt'
+    'pip3 install --no-cache-dir -r requirements.txt'
 ]
 
 [start]
