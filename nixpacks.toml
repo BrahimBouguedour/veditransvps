@@ -1,19 +1,20 @@
 [phases.setup]
-nixPkgs = ['python310']
+nixPkgs = ['python310', 'gcc']
 
 [phases.install]
 cmds = [
-    'curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py',
-    'python3 get-pip.py',
+    'python3 -m venv /app/venv',
+    'source /app/venv/bin/activate',
     'cd backend',
-    'pip install -r requirements.txt'
+    '/app/venv/bin/pip install --upgrade pip setuptools wheel',
+    '/app/venv/bin/pip install -r requirements.txt'
 ]
 
 [start]
-cmd = 'cd backend && python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT'
+cmd = 'source /app/venv/bin/activate && cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT'
 
 [variables]
 PYTHONUNBUFFERED = "1"
-PYTHONPATH = "/app/backend"
-PIP_NO_CACHE_DIR = "1"
-SETUPTOOLS_USE_DISTUTILS = "stdlib" 
+VIRTUAL_ENV = "/app/venv"
+PATH = "/app/venv/bin:${PATH}"
+PYTHONPATH = "/app/backend" 
