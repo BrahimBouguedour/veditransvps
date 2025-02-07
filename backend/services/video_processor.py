@@ -8,6 +8,10 @@ from typing import Optional
 import tempfile
 from dotenv import load_dotenv
 from subprocess import TimeoutExpired
+import torch
+import torchaudio
+import numpy as np
+import requests
 
 def wait_for_file_access(file_path: str, max_retries: int = 5, delay: int = 2):
     """Wait for a file to become accessible."""
@@ -24,10 +28,13 @@ def wait_for_file_access(file_path: str, max_retries: int = 5, delay: int = 2):
 class VideoProcessor:
     def __init__(self):
         self.whisper_model = whisper.load_model("base")
-        # Load environment variables and configure Gemini
+        # Load environment variables and configure APIs
         load_dotenv()
         genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
         self.model = genai.GenerativeModel('gemini-pro')
+        self.elevenlabs_api_key = os.getenv('ELEVENLABS_API_KEY')
+        if not self.elevenlabs_api_key:
+            raise ValueError("ELEVENLABS_API_KEY not found in environment variables")
 
     def extract_audio(self, video_path: str) -> str:
         """Extract audio from video file."""
@@ -158,89 +165,105 @@ class VideoProcessor:
             print(error_msg)
             raise Exception(error_msg)
 
-    def generate_speech(self, text: str, lang: str) -> str:
-        """Generate speech using Google Text-to-Speech."""
+    def generate_speech(self, text: str, lang: str, voice_id: Optional[str] = None) -> str:
+        """Generate speech using ElevenLabs with optional voice cloning."""
         temp_audio_path = None
         wav_path = None
         
         try:
             print(f"\nStarting speech generation for language: {lang}")
-            print(f"Text to convert: {text[:100]}...")  # Print first 100 chars
+            print(f"Text to convert: {text[:100]}...")
             
-            # Map language codes for gTTS
-            lang_mapping = {
-                'spanish': 'es',
-                'french': 'fr',
-                'german': 'de',
-                'italian': 'it',
-                'portuguese': 'pt',
-                'russian': 'ru',
-                'japanese': 'ja',
-                'korean': 'ko',
-                'chinese': 'zh-cn',
-                'arabic': 'ar'  # Adding Arabic support
+            # Create temporary files
+            temp_audio_path = tempfile.mktemp(suffix='.mp3')
+            wav_path = tempfile.mktemp(suffix='.wav')
+            
+            # For free tier, use the default "Adam" voice if no voice_id is provided
+            voice_id = voice_id or "pNInz6obpgDQGcFmaJgB"  # Adam voice ID
+            
+            # ElevenLabs API endpoint
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+            
+            headers = {
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+                "xi-api-key": self.elevenlabs_api_key
             }
             
-            # Get correct language code
-            tts_lang = lang_mapping.get(lang.lower(), lang.lower())
-            print(f"Using TTS language code: {tts_lang}")
+            # Split text into chunks of 2500 characters for free tier limitation
+            max_chunk_size = 2500
+            text_chunks = [text[i:i + max_chunk_size] for i in range(0, len(text), max_chunk_size)]
             
-            # Create a temporary file for the audio
-            temp_audio_path = tempfile.mktemp(suffix='.mp3')
-            print(f"Created temporary MP3 file: {temp_audio_path}")
+            all_audio_chunks = []
             
-            # Generate speech
-            print("Initializing Google TTS...")
-            tts = gTTS(text=text, lang=tts_lang)
-            print("Saving audio to temporary file...")
-            tts.save(temp_audio_path)
-            
-            # Verify MP3 file
-            if not os.path.exists(temp_audio_path):
-                raise Exception("Failed to create MP3 file")
-            
-            mp3_size = os.path.getsize(temp_audio_path)
-            print(f"MP3 file created successfully. Size: {mp3_size} bytes")
-            
-            if mp3_size < 1024:  # Less than 1KB
-                raise Exception("Generated audio file is suspiciously small")
-            
-            # Convert mp3 to wav for better compatibility
-            wav_path = temp_audio_path.rsplit('.', 1)[0] + '.wav'
-            print(f"Converting to WAV format: {wav_path}")
-            
-            # Convert using ffmpeg with detailed logging
-            try:
-                stream = ffmpeg.input(temp_audio_path)
-                stream = ffmpeg.output(stream, wav_path,
-                    acodec='pcm_s16le',
-                    ac=1,
-                    ar='16k',
-                    loglevel='info'  # Increased logging level
-                )
-                ffmpeg.run(stream, overwrite_output=True, capture_stderr=True)
+            for chunk in text_chunks:
+                data = {
+                    "text": chunk,
+                    "model_id": "eleven_multilingual_v1",  # Free tier model
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75,
+                        "style": 0.0,
+                        "use_speaker_boost": True
+                    }
+                }
                 
-                # Verify WAV file
-                if os.path.exists(wav_path):
-                    wav_size = os.path.getsize(wav_path)
-                    print(f"WAV conversion successful. Size: {wav_size} bytes")
-                    
-                    if wav_size < 1024:  # Less than 1KB
-                        raise Exception("Converted WAV file is suspiciously small")
+                print(f"Generating speech for chunk of length {len(chunk)}...")
+                response = requests.post(url, json=data, headers=headers)
+                
+                if response.status_code == 200:
+                    chunk_path = tempfile.mktemp(suffix='.mp3')
+                    with open(chunk_path, 'wb') as f:
+                        f.write(response.content)
+                    all_audio_chunks.append(chunk_path)
                 else:
-                    raise Exception("WAV file not created")
-                
-            except ffmpeg.Error as e:
-                error_message = str(e.stderr.decode()) if e.stderr else str(e)
-                print(f"FFmpeg conversion error: {error_message}")
-                raise Exception(f"Failed to convert audio: {error_message}")
+                    raise Exception(f"ElevenLabs API error: {response.text}")
             
-            # Clean up the mp3 file
-            try:
+            # Concatenate all audio chunks if there are multiple
+            if len(all_audio_chunks) > 1:
+                print("Concatenating audio chunks...")
+                inputs = [ffmpeg.input(chunk) for chunk in all_audio_chunks]
+                concat = ffmpeg.concat(*inputs, v=0, a=1)
+                concat = ffmpeg.output(concat, temp_audio_path)
+                ffmpeg.run(concat, overwrite_output=True)
+            elif len(all_audio_chunks) == 1:
+                # Just move the single chunk to temp_audio_path
+                os.rename(all_audio_chunks[0], temp_audio_path)
+            
+            # Clean up chunk files
+            for chunk_path in all_audio_chunks:
+                if os.path.exists(chunk_path):
+                    try:
+                        os.remove(chunk_path)
+                    except:
+                        pass
+            
+            # Convert to WAV using ffmpeg
+            print("Converting to WAV format...")
+            stream = ffmpeg.input(temp_audio_path)
+            stream = ffmpeg.output(
+                stream,
+                wav_path,
+                acodec='pcm_s16le',
+                ac=1,
+                ar='24000'
+            )
+            ffmpeg.run(stream, overwrite_output=True)
+            
+            # Clean up MP3 file
+            if os.path.exists(temp_audio_path):
                 os.remove(temp_audio_path)
-                print("Temporary MP3 file cleaned up successfully")
-            except Exception as e:
-                print(f"Warning: Failed to clean up MP3 file: {str(e)}")
+                print("Cleaned up temporary MP3 file")
+            
+            # Verify WAV file
+            if not os.path.exists(wav_path):
+                raise Exception("WAV file not created")
+            
+            wav_size = os.path.getsize(wav_path)
+            print(f"WAV file created successfully. Size: {wav_size} bytes")
+            
+            if wav_size < 1024:  # Less than 1KB
+                raise Exception("Generated audio file is suspiciously small")
             
             print("Speech generation completed successfully")
             return wav_path
@@ -256,6 +279,49 @@ class VideoProcessor:
                     except Exception as cleanup_error:
                         print(f"Warning: Failed to clean up {file_path}: {str(cleanup_error)}")
             raise Exception(f"Failed to generate speech: {str(e)}")
+
+    def clone_voice(self, audio_file_path: str, name: str, description: Optional[str] = None) -> str:
+        """Clone a voice using ElevenLabs Voice Lab."""
+        try:
+            # Check if file is WAV format
+            if not audio_file_path.lower().endswith('.wav'):
+                raise Exception("Free tier only supports WAV files for voice cloning")
+            
+            # Check file size (free tier limit is 10MB)
+            file_size = os.path.getsize(audio_file_path)
+            if file_size > 10 * 1024 * 1024:  # 10MB in bytes
+                raise Exception("Audio file size exceeds free tier limit of 10MB")
+            
+            url = "https://api.elevenlabs.io/v1/voices/add"
+            
+            headers = {
+                "Accept": "application/json",
+                "xi-api-key": self.elevenlabs_api_key
+            }
+
+            with open(audio_file_path, 'rb') as f:
+                files = {
+                    'files': (os.path.basename(audio_file_path), f, 'audio/wav'),
+                    'name': (None, name),
+                    'description': (None, description or f"Cloned voice for {name}")
+                }
+                
+                response = requests.post(url, headers=headers, files=files)
+                
+                if response.status_code == 200:
+                    voice_data = response.json()
+                    return voice_data.get('voice_id')
+                else:
+                    error_msg = response.text
+                    if "quota" in error_msg.lower():
+                        print("Free tier voice cloning quota exceeded, using default voice")
+                        return None
+                    raise Exception(f"Voice cloning failed: {error_msg}")
+                    
+        except Exception as e:
+            print(f"Voice cloning error: {str(e)}")
+            print("Falling back to default voice...")
+            return None
 
     def merge_audio_video(self, video_path: str, audio_path: str) -> str:
         """Merge translated audio with original video."""
@@ -281,12 +347,14 @@ class VideoProcessor:
         """Process video through the complete translation pipeline."""
         audio_path = None
         temp_audio_path = None
+        cloned_voice_id = None
         start_time = time.time()
         step_timing = {}
         results = {
             'audio_extraction': {'status': 'not_started'},
             'transcription': {'status': 'not_started'},
             'translation': {'status': 'not_started'},
+            'voice_cloning': {'status': 'not_started'} if preserve_voice else None,
             'speech_generation': {'status': 'not_started'},
             'audio_merge': {'status': 'not_started'}
         }
@@ -295,6 +363,7 @@ class VideoProcessor:
             print(f"Starting video processing at {time.strftime('%Y-%m-%d %H:%M:%S')}")
             print(f"Input video: {video_path}")
             print(f"Target language: {target_language}")
+            print(f"Preserve voice: {preserve_voice}")
             
             # Step 1: Extract Audio
             step_start = time.time()
@@ -343,10 +412,37 @@ class VideoProcessor:
             }
             print(f"Translation completed in {step_timing['translation']:.2f} seconds")
             
+            # Optional Step: Voice Cloning
+            if preserve_voice:
+                step_start = time.time()
+                print("Optional Step: Cloning voice...")
+                try:
+                    cloned_voice_id = self.clone_voice(
+                        audio_path,
+                        f"voice_{os.path.basename(video_path)}",
+                        "Cloned voice for video translation"
+                    )
+                    step_timing['voice_cloning'] = time.time() - step_start
+                    results['voice_cloning'] = {
+                        'status': 'success',
+                        'voice_id': cloned_voice_id
+                    }
+                    print(f"Voice cloning completed in {step_timing['voice_cloning']:.2f} seconds")
+                except Exception as e:
+                    print(f"Voice cloning failed: {str(e)}")
+                    results['voice_cloning'] = {
+                        'status': 'error',
+                        'error': str(e)
+                    }
+            
             # Step 4: Generate Speech
             step_start = time.time()
             print("Step 4: Generating speech...")
-            temp_audio_path = self.generate_speech(translated_text, target_language.lower())
+            temp_audio_path = self.generate_speech(
+                translated_text,
+                target_language.lower(),
+                voice_id=cloned_voice_id if preserve_voice else None
+            )
             step_timing['speech_generation'] = time.time() - step_start
             
             # Get generated audio details
@@ -356,7 +452,8 @@ class VideoProcessor:
                 'status': 'success',
                 'file_path': temp_audio_path,
                 'size': speech_size,
-                'duration': speech_duration
+                'duration': speech_duration,
+                'voice_id': cloned_voice_id if preserve_voice else None
             }
             print(f"Speech generation completed in {step_timing['speech_generation']:.2f} seconds")
             
@@ -390,7 +487,8 @@ class VideoProcessor:
                 'step_timing': step_timing,
                 'results': results,
                 'audio_duration': audio_duration,
-                'file_size': final_size
+                'file_size': final_size,
+                'voice_id': cloned_voice_id if preserve_voice else None
             }
             
         except Exception as e:

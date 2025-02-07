@@ -8,7 +8,6 @@ celery[redis]==5.3.6
 redis==5.0.1
 boto3==1.29.3
 pydantic>=2.0.0
-elevenlabs==0.2.26
 google-generativeai>=0.3.0
 moviepy==1.0.3
 sqlalchemy==2.0.23
@@ -16,6 +15,18 @@ psycopg2-binary==2.9.9
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 typing-extensions>=4.8.0
-torch
-numpy
-tqdm 
+
+# Core ML dependencies
+torch>=2.0.0
+torchaudio>=2.0.0
+numpy>=1.24.0
+tqdm>=4.65.0
+transformers>=4.30.0
+
+# Audio processing
+soundfile>=0.12.1
+librosa>=0.10.0
+scipy>=1.11.0
+
+# Text to Speech
+gTTS==2.3.2 
