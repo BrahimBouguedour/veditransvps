@@ -1,13 +1,13 @@
 [phases.setup]
-nixPkgs = ['python39', 'python39Packages.pip', 'gcc', 'ffmpeg', 'git']
-aptPkgs = ['python3-dev', 'build-essential']
+nixPkgs = ['python39', 'gcc']
+aptPkgs = ['python3-dev', 'build-essential', 'ffmpeg', 'git']
 
 [phases.install]
 cmds = [
-    'python3 -m pip install --user --upgrade pip',
+    'python3 -m ensurepip',
+    'python3 -m pip install --no-cache-dir --upgrade pip',
     'cd backend',
-    'python3 -m pip install --user wheel setuptools',
-    'python3 -m pip install --user -r requirements.txt'
+    'python3 -m pip install --no-cache-dir -r requirements.txt'
 ]
 
 [start]
