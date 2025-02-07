@@ -1,17 +1,18 @@
 [phases.setup]
-nixPkgs = ['python39', 'gcc', 'ffmpeg', 'git']
+nixPkgs = ['python39', 'gcc', 'ffmpeg', 'git', 'python39Packages.pip']
 aptPkgs = ['python3-dev', 'build-essential']
 
 [phases.install]
 cmds = [
-    'python -m pip install --upgrade pip',
+    'python3.9 -m ensurepip',
+    'python3.9 -m pip install --upgrade pip',
     'cd backend',
-    'pip install wheel setuptools',
-    'pip install -r requirements.txt'
+    'python3.9 -m pip install wheel setuptools',
+    'python3.9 -m pip install -r requirements.txt'
 ]
 
 [start]
-cmd = 'cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT'
+cmd = 'cd backend && python3.9 -m uvicorn main:app --host 0.0.0.0 --port $PORT'
 
 [variables]
 PYTHONUNBUFFERED = "1"
