@@ -1,11 +1,12 @@
 [phases.setup]
-nixPkgs = ['python310', 'python310Packages.pip', 'python310Packages.setuptools', 'python310Packages.wheel']
+nixPkgs = ['python310']
 
 [phases.install]
 cmds = [
+    'curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py',
+    'python3 get-pip.py',
     'cd backend',
-    'python3 -m pip install --no-deps -r requirements.txt',
-    'python3 -m pip install -r requirements.txt'
+    'pip install -r requirements.txt'
 ]
 
 [start]
