@@ -25,7 +25,10 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Frontend dev server
+    allow_origins=[
+        "http://localhost:5173",  # Frontend dev server
+        "https://beautiful-kringle-a1ab2c.netlify.app"  # Netlify deployment
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
